@@ -1,6 +1,6 @@
-train: data/trained/train/images
-val: data/trained/valid/images
-test: data/trained/test/images
+train: ../data/trained/train/images
+val: ../data/trained/valid/images
+test: ../data/trained/test/images
 
 nc: 13
 names:

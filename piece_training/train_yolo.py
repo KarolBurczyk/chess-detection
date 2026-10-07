@@ -12,12 +12,12 @@ from ultralytics import YOLO
 
 
 MODEL = "yolo11n.pt"
-DATA = "data.yaml"
+DATA = str(Path(__file__).resolve().with_name("data.yaml"))
 EPOCHS = 100
 IMGSZ = 640
 BATCH = 2
 DEVICE = "cpu"
-PROJECT = "runs"
+PROJECT = str(Path(__file__).resolve().parent.parent / "runs")
 NAME = "chess_train"
 EXIST_OK = True
 EXPORT_ONNX = False
