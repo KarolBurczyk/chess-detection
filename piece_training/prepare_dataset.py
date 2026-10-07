@@ -16,6 +16,26 @@ SOURCE_ROOT = PROJECT_ROOT / "data" / "raw" / "Chess_pieces"
 OUTPUT_ROOT = PROJECT_ROOT / "data" / "trained"
 
 
+def resolve_source_root() -> Path:
+    """Find the actual dataset root when Kaggle downloads nested folders.
+
+    Some Kaggle exports place the dataset inside a nested folder such as
+    `Chess_pieces/` or `Chess Pieces.yolov8-obb/` instead of directly under
+    the expected raw directory.
+
+    :return: Path to the folder containing the source dataset YAML file.
+    """
+    candidates = [
+        SOURCE_ROOT,
+        SOURCE_ROOT / "Chess_pieces",
+        SOURCE_ROOT / "Chess Pieces.yolov8-obb",
+    ]
+    for candidate in candidates:
+        if (candidate / "data.yaml").exists() or (candidate / "data.yaml.yaml").exists():
+            return candidate
+    return SOURCE_ROOT
+
+
 def ensure_dataset_layout() -> None:
     """Create the expected train/valid/test directories for the prepared dataset.
 
@@ -32,14 +52,15 @@ def load_source_names() -> list[str]:
 
     :return: Ordered list of class names from the dataset configuration.
     """
+    source_root = resolve_source_root()
     candidates = [
-        SOURCE_ROOT / "data.yaml",
-        SOURCE_ROOT / "data.yaml.yaml",
+        source_root / "data.yaml",
+        source_root / "data.yaml.yaml",
     ]
     source_yaml = next((candidate for candidate in candidates if candidate.exists()), None)
     if source_yaml is None:
         raise FileNotFoundError(
-            f"Missing source dataset config: {SOURCE_ROOT / 'data.yaml'}\n"
+            f"Missing source dataset config: {source_root / 'data.yaml'}\n"
             "Expected a source dataset under data/raw/Chess_pieces/ with a YOLO-style data.yaml."
         )
 
@@ -121,7 +142,7 @@ def copy_and_convert_split(split_name: str, source_names: list[str]) -> None:
     :param source_names: Ordered list of class names used by the dataset.
     :return: None.
     """
-    source_split_dir = SOURCE_ROOT / split_name
+    source_split_dir = resolve_source_root() / split_name
     if not source_split_dir.exists():
         print(f"Skipping missing split: {source_split_dir}")
         return
@@ -188,7 +209,8 @@ def main() -> None:
 
     :return: None.
     """
-    if not SOURCE_ROOT.exists():
+    source_root = resolve_source_root()
+    if not source_root.exists():
         ensure_dataset_layout()
         raise SystemExit(
             f"Dataset source directory not found: {SOURCE_ROOT}\n"
