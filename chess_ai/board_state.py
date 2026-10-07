@@ -2,25 +2,29 @@ import chess
 
 
 class BoardState:
-    """Class representing the state of a chess game."""
+    """Convenience wrapper around a python-chess board state."""
 
-    def __init__(self):
-        """Initialize a new chess game state."""
+    def __init__(self) -> None:
+        """Create a fresh chess board in the starting position.
+
+        :param self: The instance being initialized.
+        :return: None.
+        """
         self.board: chess.Board = chess.Board()
 
     def get_legal_moves(self) -> list[str]:
-        """Get a list of legal moves in UCI format.
-        :return: A list of legal moves as strings in UCI format.
+        """Return all legal moves in UCI notation for the current position.
+
+        :param self: The board state instance.
+        :return: A list of legal moves as UCI strings.
         """
-        return list(
-            str(move) for move in self.board.legal_moves
-        )
+        return [str(move) for move in self.board.legal_moves]
 
     def check_move_legality(self, move: str) -> bool:
-        """Check if a move is legal.
+        """Check whether a move string is legal in the current board state.
 
-        :param move: The move to check in UCI format.
-        :return: True if the move is legal, False otherwise.
+        :param move: The move in UCI format, such as "e2e4".
+        :return: True when the move is legal, otherwise False.
         """
         try:
             chess_move = chess.Move.from_uci(move)
@@ -29,10 +33,10 @@ class BoardState:
             return False
 
     def make_move(self, move: str) -> bool:
-        """Make a move on the chess board.
+        """Apply a legal move to the internal board.
 
-        :param move: The move to make in UCI format.
-        :return: True if the move was successful, False otherwise.
+        :param move: The move in UCI format to play.
+        :return: True if the move was applied, otherwise False.
         """
         if self.check_move_legality(move):
             chess_move = chess.Move.from_uci(move)

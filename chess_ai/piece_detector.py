@@ -1,12 +1,18 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
+
 import cv2
-from config import Config
+import numpy as np
 from ultralytics import YOLO
+
+from config import Config
 
 
 @dataclass
 class Detection:
+    """Single YOLO detection with rectangle and confidence data."""
+
     class_id: int
     label: str
     conf: float
@@ -18,20 +24,31 @@ class Detection:
 
 
 class PieceDetector:
-    """Wykrywa figury modelu YOLO i zwraca prostokąty wraz z centrem."""
+    """Detect chess pieces in a frame and return their bounding boxes."""
 
-    def __init__(self, model_path: str | None = None):
-        self.model_path = model_path or Config.MODEL_PATH
+    def __init__(self, model_path: str | None = None) -> None:
+        """Initialize the YOLO detector.
+
+        :param model_path: Optional path to a custom model. If omitted, use Config.MODEL_PATH.
+        :return: None.
+        """
+        self.model_path: str = model_path or Config.MODEL_PATH
         self.model = YOLO(self.model_path)
 
-    def detect(self, frame):
+    def detect(self, frame: np.ndarray) -> list[Detection]:
+        """Run YOLO detection on one camera frame.
+
+        :param frame: BGR image from the camera or video source.
+        :return: List of detected pieces with bounding boxes and confidence values.
+        """
         results = self.model(
             frame,
             conf=Config.CONF,
-            iou=Config.IOU,               # niższy próg = agresywniej usuwa nakładające się ramki (domyślnie 0.7)
-            agnostic_nms=True,     # porównuje ramki między klasami, zostaje ta z większą pewnością
+            iou=Config.IOU,
+            agnostic_nms=True,
             verbose=False,
         )[0]
+
         detections: list[Detection] = []
         for box in results.boxes:
             x1, y1, x2, y2 = map(int, box.xyxy[0])
@@ -53,7 +70,13 @@ class PieceDetector:
             )
         return detections
 
-    def draw(self, frame, detections):
+    def draw(self, frame: np.ndarray, detections: list[Detection]) -> np.ndarray:
+        """Draw the detection boxes on a frame and return the modified frame.
+
+        :param frame: The image to annotate.
+        :param detections: List of detection objects returned by detect().
+        :return: The same frame after drawing boxes and labels.
+        """
         for detection in detections:
             cv2.rectangle(frame, (detection.x1, detection.y1), (detection.x2, detection.y2), (255, 0, 0), 2)
             cv2.putText(

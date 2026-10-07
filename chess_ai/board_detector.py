@@ -6,11 +6,11 @@ import chess
 
 
 class BoardDetector:
-    """Wykrywa planszę (także przy kamerze ustawionej pod kątem) i robi homografię do układu 8x8.
+    """Detect the chessboard and estimate the 8x8 homography from a camera frame.
 
-    Kluczowa zmiana względem poprzedniej wersji: kandydaci na prostokąt planszy
-    NIE są wybierani po największym polu, tylko po tym, jak dobrze pasuje do nich
-    wzór szachownicy (jasne/ciemne pola na przemian).
+    The key change from the previous version is that board rectangle candidates are
+    not selected by the largest area alone; instead, each candidate is scored by how
+    well it matches the chessboard pattern of alternating light and dark squares.
     """
 
     def __init__(
@@ -20,21 +20,33 @@ class BoardDetector:
         max_margin: float = 0.10,
         bottom_left: str = "h1",
         min_fit: float = 0.30,
-    ):
+    ) -> None:
+        """Create a board detector with calibration and detection parameters.
+
+        :param warp: Size of the synthetic top-down board image used for calibration.
+        :param history_frames: Number of frames kept to stabilize the detected corners.
+        :param max_margin: Maximum margin around the board that may be cropped away.
+        :param bottom_left: Square used as the board origin. For example, "h1" is the bottom-left square.
+        :param min_fit: Minimum checkerboard-fit score required to accept a candidate.
+        :return: None.
+        """
         self.WARP = warp
         self.CELL = self.WARP // 8
         self.HISTORY_FRAMES = history_frames
         self.MAX_MARGIN = max_margin
         self.BOTTOM_LEFT = bottom_left
-        self.MIN_FIT = min_fit          # minimalne dopasowanie wzoru szachownicy (0..1)
-        self.SCORE_SIZE = 400           # rozmiar warpa do szybkiej oceny kandydatów
+        self.MIN_FIT = min_fit
+        self.SCORE_SIZE = 400
         self.ROT_K = self._find_rotation()
         self.message = ""
         self.last_candidate_score = 0.0
         self.reset()
 
-    def reset(self):
-        """Nowa kalibracja od zera (np. po przesunięciu planszy)."""
+    def reset(self) -> None:
+        """Reset the internal calibration state and start from a fresh board detection attempt.
+
+        :return: None.
+        """
         self.corners_history: list[np.ndarray] = []
         self.gray_frames: list[np.ndarray] = []
         self.board_corners: np.ndarray | None = None
@@ -44,13 +56,23 @@ class BoardDetector:
         self.fit_score = 0.0
 
     # ----------------------------------------------------------------------
-    # Orientacja
+    # Orientation
     # ----------------------------------------------------------------------
     @staticmethod
-    def _rotate_cell(col: int, row: int):
+    def _rotate_cell(col: int, row: int) -> tuple[int, int]:
+        """Rotate a chessboard cell index by 90 degrees.
+
+        :param col: Column index in the current coordinate system.
+        :param row: Row index in the current coordinate system.
+        :return: Rotated column and row pair.
+        """
         return 7 - row, col
 
     def _find_rotation(self) -> int:
+        """Find the board rotation offset needed to map image coordinates to chess coordinates.
+
+        :return: Rotation count in 0..3.
+        """
         target = chess.parse_square(self.BOTTOM_LEFT)
         for k in range(4):
             c, r = 0, 7
@@ -58,27 +80,36 @@ class BoardDetector:
                 c, r = self._rotate_cell(c, r)
             if chess.square(c, 7 - r) == target:
                 return k
-        raise ValueError(f"BOTTOM_LEFT musi być jednym z rogów, jest: {self.BOTTOM_LEFT}")
+        raise ValueError(f"BOTTOM_LEFT must be one of the board corners, got: {self.BOTTOM_LEFT}")
 
     # ----------------------------------------------------------------------
-    # Kandydaci na prostokąt planszy
+    # Board rectangle candidates
     # ----------------------------------------------------------------------
     @staticmethod
     def order_points(pts: np.ndarray) -> np.ndarray:
-        """Kolejność: lewy-górny, prawy-górny, prawy-dolny, lewy-dolny.
+        """Order a quadrilateral as top-left, top-right, bottom-right, bottom-left.
 
-        Sortowanie po kącie wokół środka działa też dla planszy obróconej na obrazie
-        (stara wersja z sum/różnic potrafiła zdublować róg przy obrocie ~45 stopni).
+        Sorting by angle around the center works even when the board is rotated in the image,
+        which avoids corner duplication around a ~45 degree rotation.
+
+        :param pts: Four source points describing a quadrilateral.
+        :return: Ordered corner array in the expected chessboard layout.
         """
         pts = np.asarray(pts, dtype=np.float32).reshape(4, 2)
         c = pts.mean(axis=0)
         ang = np.arctan2(pts[:, 1] - c[1], pts[:, 0] - c[0])
-        pts = pts[np.argsort(ang)]                 # zgodnie z ruchem wskazówek zegara na ekranie
-        start = int(np.argmin(pts.sum(axis=1)))    # zaczynamy od rogu najbliżej lewego-górnego
+        pts = pts[np.argsort(ang)]
+        start = int(np.argmin(pts.sum(axis=1)))
         return np.roll(pts, -start, axis=0).astype(np.float32)
 
     @staticmethod
     def board_candidate_is_valid(corners: np.ndarray, frame_shape) -> bool:
+        """Check whether a quadrilateral is a plausible chessboard candidate.
+
+        :param corners: Candidate rectangle corners in image space.
+        :param frame_shape: Frame shape in the form (height, width, channels).
+        :return: True when the rectangle looks like a valid board boundary.
+        """
         if corners is None or corners.shape != (4, 2):
             return False
         h, w = frame_shape[:2]
@@ -93,7 +124,6 @@ class BoardDetector:
         side_lengths = [np.linalg.norm(corners[i] - corners[(i + 1) % 4]) for i in range(4)]
         if min(side_lengths) <= 0:
             return False
-        # przy kamerze pod kątem bliższy bok jest wyraźnie dłuższy niż dalszy
         if max(side_lengths) / min(side_lengths) > 4.0:
             return False
 
@@ -104,13 +134,17 @@ class BoardDetector:
 
     @staticmethod
     def _binary_maps(gray: np.ndarray) -> list[np.ndarray]:
-        """Kilka różnych binarnych map, z których wyciągamy kontury kandydatów."""
+        """Create multiple binary maps used to extract board-candidate contours.
+
+        :param gray: Grayscale frame.
+        :return: List of edge and thresholded binary maps.
+        """
         blur = cv2.GaussianBlur(gray, (5, 5), 0)
         med = float(np.median(blur))
         lo = int(max(0.0, 0.66 * med))
         hi = int(min(255.0, max(1.33 * med, lo + 20)))
 
-        maps = []
+        maps: list[np.ndarray] = []
         e1 = cv2.Canny(blur, lo, hi)
         maps.append(cv2.morphologyEx(e1, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8)))
         e2 = cv2.Canny(blur, 30, 90)
@@ -123,16 +157,22 @@ class BoardDetector:
         return maps
 
     def _candidates(self, frame_shape, gray: np.ndarray) -> list[np.ndarray]:
+        """Collect board candidate quadrilaterals from the current frame.
+
+        :param frame_shape: Image shape in (height, width, channels) format.
+        :param gray: Grayscale image.
+        :return: List of candidate board corners.
+        """
         frame_area = frame_shape[0] * frame_shape[1]
         quads: list[np.ndarray] = []
-        seen: set = set()
+        seen: set[tuple[int, ...]] = set()
 
         for bmap in self._binary_maps(gray):
             contours, _ = cv2.findContours(bmap, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
             hulls = []
             for c in contours:
                 _, _, bw, bh = cv2.boundingRect(c)
-                if bw * bh < 0.05 * frame_area:      # tani prefiltr, zanim policzymy otoczkę
+                if bw * bh < 0.05 * frame_area:
                     continue
                 hull = cv2.convexHull(c)
                 area = cv2.contourArea(hull)
@@ -155,7 +195,12 @@ class BoardDetector:
         return quads
 
     def _score_quad(self, quad: np.ndarray, gray: np.ndarray) -> float:
-        """Jak bardzo wnętrze czworokąta wygląda jak szachownica 8x8 (0..1)."""
+        """Score how strongly a quadrilateral resembles a checkerboard pattern.
+
+        :param quad: Candidate board rectangle corners.
+        :param gray: Current grayscale frame.
+        :return: Checkerboard fit score in the range [0, 1].
+        """
         S = self.SCORE_SIZE
         dst = np.float32([[0, 0], [S, 0], [S, S], [0, S]])
         H0 = cv2.getPerspectiveTransform(quad.astype(np.float32), dst)
@@ -167,6 +212,11 @@ class BoardDetector:
         )
 
     def detect_board_corners(self, frame) -> np.ndarray | None:
+        """Find the best board rectangle candidate in the current frame.
+
+        :param frame: Input camera frame.
+        :return: The detected board corners or None when the board is not detected well enough.
+        """
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         best, best_score = None, 0.0
         for q in self._candidates(frame.shape, gray):
@@ -179,9 +229,18 @@ class BoardDetector:
         return best
 
     # ----------------------------------------------------------------------
-    # Dopasowanie siatki pól (bez ramki z numerami i literami)
+    # Checkerboard grid fit (excluding the border with board labels)
     # ----------------------------------------------------------------------
     def checker_score(self, integ: np.ndarray, left: float, top: float, right: float, bottom: float) -> float:
+        """Estimate how closely the region matches an 8x8 alternating chessboard pattern.
+
+        :param integ: Integral image for the warped board.
+        :param left: Left crop fraction.
+        :param top: Top crop fraction.
+        :param right: Right crop fraction.
+        :param bottom: Bottom crop fraction.
+        :return: Score in the range [0, 1], where higher is more board-like.
+        """
         S = integ.shape[0] - 1
         xi = np.round(np.linspace(left * S, (1 - right) * S, 9)).astype(int)
         yi = np.round(np.linspace(top * S, (1 - bottom) * S, 9)).astype(int)
@@ -206,6 +265,11 @@ class BoardDetector:
         return abs(float((v * pattern).sum())) / denom
 
     def fit_margins(self, warped_gray: np.ndarray):
+        """Tune the crop margins to maximize the checkerboard fit score.
+
+        :param warped_gray: Top-down board image with the current board geometry.
+        :return: A tuple containing the best margins and the final score.
+        """
         integ = cv2.integral(warped_gray, sdepth=cv2.CV_64F)
 
         best_m = [0.0] * 4
@@ -232,9 +296,15 @@ class BoardDetector:
         return best_m, best
 
     # ----------------------------------------------------------------------
-    # Geometria
+    # Geometry
     # ----------------------------------------------------------------------
     def calibrate(self, corners: np.ndarray, gray_frames: list[np.ndarray]):
+        """Compute the homography and crop transform that map the detected board to the 8x8 plane.
+
+        :param corners: Detected board corners in the image plane.
+        :param gray_frames: Previous grayscale frames used for stable board calibration.
+        :return: A tuple with the homography, inverse homography, crop margins, and fit score.
+        """
         dst = np.float32([[0, 0], [self.WARP, 0], [self.WARP, self.WARP], [0, self.WARP]])
         H0 = cv2.getPerspectiveTransform(corners.astype(np.float32), dst)
 
@@ -251,6 +321,13 @@ class BoardDetector:
         return H, np.linalg.inv(H), (left, top, right, bottom), score
 
     def to_square(self, px: float, py: float, H: np.ndarray | None = None):
+        """Transform a pixel point into a chessboard square index.
+
+        :param px: Point x coordinate in image space.
+        :param py: Point y coordinate in image space.
+        :param H: Optional homography to use instead of the current calibration.
+        :return: The mapped chess square or None if the point falls outside the board.
+        """
         H = self.H if H is None else H
         if H is None:
             return None
@@ -263,16 +340,32 @@ class BoardDetector:
         return chess.square(col, 7 - row)
 
     def warp_to_frame(self, points, Hinv):
+        """Project points from the warped board space back to the camera frame.
+
+        :param points: Points in board space.
+        :param Hinv: Inverse homography.
+        :return: Projected points in the original image coordinate system.
+        """
         pts = np.float32(points).reshape(-1, 1, 2)
         return cv2.perspectiveTransform(pts, Hinv).reshape(-1, 2)
 
     def warped_view(self, frame) -> np.ndarray | None:
-        """Widok planszy z góry (same pola) - przydatny do podglądu kontrolnego."""
+        """Return the top-down board view used for debugging or inspection.
+
+        :param frame: Input camera frame.
+        :return: The rectified board view or None if the board is not calibrated yet.
+        """
         if self.H is None:
             return None
         return cv2.warpPerspective(frame, self.H, (self.WARP, self.WARP))
 
     def draw_grid(self, frame, Hinv):
+        """Overlay the board grid lines onto the source frame.
+
+        :param frame: Source image to draw on.
+        :param Hinv: Inverse homography used to project the grid back to the image.
+        :return: None.
+        """
         for i in range(9):
             a, b = self.warp_to_frame([[i * self.CELL, 0], [i * self.CELL, self.WARP]], Hinv).astype(int)
             cv2.line(frame, tuple(a), tuple(b), (255, 200, 0), 1)
@@ -283,9 +376,14 @@ class BoardDetector:
         cv2.putText(frame, self.BOTTOM_LEFT, tuple(bl), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
     # ----------------------------------------------------------------------
-    # Wywoływane w każdej klatce
+    # Called on every frame
     # ----------------------------------------------------------------------
     def update(self, frame):
+        """Track the board in the current frame and draw calibration information on it.
+
+        :param frame: Input camera image.
+        :return: The image with the board overlay drawn on top.
+        """
         if self.board_corners is None:
             corners = self.detect_board_corners(frame)
             if corners is not None:
@@ -302,12 +400,12 @@ class BoardDetector:
                     self.message = ""
                 else:
                     self.reset()
-                    self.message = f"Slabe dopasowanie ({score:.2f}), szukam ponownie"
+                    self.message = f"Weak fit ({score:.2f}), searching again"
 
             cv2.putText(
                 frame,
-                f"Szukam planszy... {len(self.corners_history)}/{self.HISTORY_FRAMES} "
-                f"(najlepszy kandydat {self.last_candidate_score:.2f})",
+                f"Looking for board... {len(self.corners_history)}/{self.HISTORY_FRAMES} "
+                f"(best candidate {self.last_candidate_score:.2f})",
                 (10, 25),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
@@ -324,7 +422,7 @@ class BoardDetector:
         left, top, right, bottom = self.margins
         cv2.putText(
             frame,
-            f"ramka auto L{left:.3f} G{top:.3f} P{right:.3f} D{bottom:.3f} | dopasowanie {self.fit_score:.2f}",
+            f"board crop L{left:.3f} T{top:.3f} R{right:.3f} B{bottom:.3f} | fit {self.fit_score:.2f}",
             (10, 25),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,

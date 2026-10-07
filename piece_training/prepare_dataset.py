@@ -1,3 +1,9 @@
+"""Convert Roboflow-style polygon annotations into YOLO bounding boxes.
+
+The script prepares the dataset structure used by the chess-piece detector,
+normalizes labels, and writes the final `data.yaml` file for training.
+"""
+
 from __future__ import annotations
 
 import re
@@ -6,11 +12,15 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SOURCE_ROOT = PROJECT_ROOT / "dataset" / "Chess_pieces"
-OUTPUT_ROOT = PROJECT_ROOT / "dataset"
+SOURCE_ROOT = PROJECT_ROOT / "data" / "raw" / "Chess_pieces"
+OUTPUT_ROOT = PROJECT_ROOT / "data" / "trained"
 
 
 def ensure_dataset_layout() -> None:
+    """Create the expected train/valid/test directories for the prepared dataset.
+
+    :return: None.
+    """
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     for split_name in ("train", "valid", "test"):
         (OUTPUT_ROOT / split_name / "images").mkdir(parents=True, exist_ok=True)
@@ -18,6 +28,10 @@ def ensure_dataset_layout() -> None:
 
 
 def load_source_names() -> list[str]:
+    """Read class names from the source dataset YAML file.
+
+    :return: Ordered list of class names from the dataset configuration.
+    """
     candidates = [
         SOURCE_ROOT / "data.yaml",
         SOURCE_ROOT / "data.yaml.yaml",
@@ -26,7 +40,7 @@ def load_source_names() -> list[str]:
     if source_yaml is None:
         raise FileNotFoundError(
             f"Missing source dataset config: {SOURCE_ROOT / 'data.yaml'}\n"
-            "Expected a source dataset under dataset/Chess_pieces with a YOLO-style data.yaml."
+            "Expected a source dataset under data/raw/Chess_pieces/ with a YOLO-style data.yaml."
         )
 
     names: dict[int, str] = {}
@@ -57,6 +71,11 @@ def load_source_names() -> list[str]:
 
 
 def convert_polygon_to_yolo_bbox(values: list[float]) -> tuple[float, float, float, float]:
+    """Convert polygon annotation values into a YOLO bounding box.
+
+    :param values: Eight values describing the polygon corners in order x1 y1 x2 y2 ...
+    :return: A tuple of (center_x, center_y, width, height).
+    """
     if len(values) != 8:
         raise ValueError(f"Expected 8 polygon values, got {len(values)}")
 
@@ -73,6 +92,11 @@ def convert_polygon_to_yolo_bbox(values: list[float]) -> tuple[float, float, flo
 
 
 def normalize_label_line(line: str) -> str | None:
+    """Normalize one annotation line from polygon format into YOLO rectangle format.
+
+    :param line: Raw annotation line from the source dataset.
+    :return: A normalized YOLO label string or None when the line is invalid.
+    """
     parts = line.strip().split()
     if not parts:
         return None
@@ -91,6 +115,12 @@ def normalize_label_line(line: str) -> str | None:
 
 
 def copy_and_convert_split(split_name: str, source_names: list[str]) -> None:
+    """Copy one dataset split and convert all polygon annotations into YOLO labels.
+
+    :param split_name: Split name such as 'train', 'valid', or 'test'.
+    :param source_names: Ordered list of class names used by the dataset.
+    :return: None.
+    """
     source_split_dir = SOURCE_ROOT / split_name
     if not source_split_dir.exists():
         print(f"Skipping missing split: {source_split_dir}")
@@ -132,24 +162,21 @@ def copy_and_convert_split(split_name: str, source_names: list[str]) -> None:
 
 
 def write_yolo_config(names: list[str]) -> None:
-    data = {
-        "train": "dataset/train/images",
-        "val": "dataset/valid/images",
-        "test": "dataset/test/images",
-        "nc": len(names),
-        "names": names,
-    }
+    """Write the final `data.yaml` file that YOLO expects.
 
+    :param names: Class names used for training.
+    :return: None.
+    """
     output_path = PROJECT_ROOT / "data.yaml"
     lines = [
-        "train: dataset/train/images",
-        "val: dataset/valid/images",
-        "test: dataset/test/images",
+        "train: data/trained/train/images",
+        "val: data/trained/valid/images",
+        "test: data/trained/test/images",
         "",
         f"nc: {len(names)}",
         "names:",
     ]
-    for idx, name in enumerate(names):
+    for name in names:
         lines.append(f"  - {name}")
 
     output_path.write_text("\n".join(lines) + "\n")
@@ -157,11 +184,15 @@ def write_yolo_config(names: list[str]) -> None:
 
 
 def main() -> None:
+    """Run dataset preparation for the chess-piece model.
+
+    :return: None.
+    """
     if not SOURCE_ROOT.exists():
         ensure_dataset_layout()
         raise SystemExit(
             f"Dataset source directory not found: {SOURCE_ROOT}\n"
-            "Create the folder dataset/Chess_pieces and place your YOLO dataset there, "
+            "Create the folder data/raw/Chess_pieces/ and place your YOLO dataset there, "
             "then run this script again."
         )
 

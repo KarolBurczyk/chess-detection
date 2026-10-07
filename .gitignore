@@ -6,5 +6,6 @@ mobileclip*.ts
 *.mp4
 runs/
 .venv/
-dataset/
+data/
 *.onnx
+.DS_Store

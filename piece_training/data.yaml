@@ -1,6 +1,6 @@
-train: dataset/train/images
-val: dataset/valid/images
-test: dataset/test/images
+train: data/trained/train/images
+val: data/trained/valid/images
+test: data/trained/test/images
 
 nc: 13
 names:
