@@ -123,27 +123,40 @@ cd piece_training
 python3 train_yolo.py
 ```
 
+## Visualizations
+
+Below are sample screenshots from the live chessboard recognition workflow and the rendered board view.
+
+<div align="center">
+
+![Board detection preview](visualisation/Zrzut%20ekranu%202026-10-7%20o%2014.37.08.png)
+
+![Detected board and piece overlay](visualisation/Zrzut%20ekranu%202026-10-7%20o%2014.37.24.png)
+
+</div>
+
 The training configuration is fixed in the script itself. The dataset paths and model settings are also defined in `chess_ai/config.py`.
 
 ## Current status
 
-The project is currently focused on:
+The project currently includes:
 
-- stable board detection,
-- mapping pieces to squares,
-- live visualization of the detected board,
-- further development toward full game-state tracking and legal-move validation.
+- stable camera capture and live board detection,
+- perspective calibration and 8x8 board mapping,
+- YOLO-based piece detection and assignment to squares,
+- live visualization of the detected board and candidate moves,
+- chess-state handling through `python-chess` in `board_state.py`.
 
-This is a working prototype for practical board-position recognition from camera input, not a complete full-featured chess engine or GUI application.
+This is a working prototype for practical board-position recognition from camera input. It already covers the main pipeline from frame capture to square-level interpretation and live rendering, while further robustness improvements are still ongoing.
 
-## Next steps
+## Next focus areas
 
-The most common next improvements are:
+The most relevant improvements in the near term are:
 
-1. stabilizing detection under different camera angles and lighting conditions,
-2. aggregating board state across multiple frames,
-3. comparing states over time to determine moves,
-4. integrating with `python-chess` to validate legal moves and chess rules.
+1. stabilizing detection under more camera angles and lighting conditions,
+2. aggregating board state across multiple frames to reduce jitter,
+3. improving move tracking and confirmation quality,
+4. refining the UI and debugging overlays for easier live analysis.
 
 ## Repository files at a glance
 
