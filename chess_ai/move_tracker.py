@@ -160,13 +160,22 @@ class MoveTracker:
         :param observations: Detection confidence map by square.
         :return: Log-likelihood contribution for this piece-square pairing.
         """
-        seen = observations.get(square)
+        seen = observations.get(square, {})
         if piece is None:
             if not seen:
                 return 0.0
             return math.log(max(1.0 - max(seen.values()), self.eps))
-        probability = seen.get(piece.symbol(), 0.0) if seen else 0.0
-        return math.log(max(probability, self.eps))
+
+        probability = seen.get(piece.symbol(), 0.0)
+        if probability > 0.0:
+            return math.log(probability)
+
+        if seen:
+            conflicting = max((conf for symbol, conf in seen.items() if symbol != piece.symbol()), default=0.0)
+            if conflicting > 0.0:
+                return math.log(max(1.0 - conflicting, self.eps)) - 4.0
+
+        return math.log(max(self.eps, probability))
 
     def score_moves(self, observations: dict[int, dict[str, float]]) -> list[tuple[float, chess.Move]]:
         """Score all legal moves against the current detection evidence.
