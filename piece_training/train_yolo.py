@@ -11,16 +11,33 @@ from pathlib import Path
 from ultralytics import YOLO
 
 
-MODEL = "yolo11n.pt"
+MODEL = "yolo11m.pt"
 DATA = str(Path(__file__).resolve().with_name("data.yaml"))
-EPOCHS = 100
+EPOCHS = 180
 IMGSZ = 640
-BATCH = 2
-DEVICE = "cpu"
+BATCH = 8
+DEVICE = "mps"
 PROJECT = str(Path(__file__).resolve().parent.parent / "runs")
-NAME = "chess_train"
+NAME = "chess_train_max"
 EXIST_OK = True
 EXPORT_ONNX = False
+
+# Small chess-piece dataset + 13 classes: keep augmentations moderate so we do not
+# distort piece silhouettes or make black/white pieces too similar.
+AUGMENTATION = {
+    "hsv_h": 0.015,
+    "hsv_s": 0.7,
+    "hsv_v": 0.4,
+    "degrees": 6,
+    "translate": 0.08,
+    "scale": 0.2,
+    "shear": 0.0,
+    "flipud": 0.0,
+    "fliplr": 0.5,
+    "mixup": 0.0,
+    "mosaic": 0.0,
+    "copy_paste": 0.0,
+}
 
 
 def main() -> None:
@@ -39,6 +56,11 @@ def main() -> None:
         project=PROJECT,
         name=NAME,
         exist_ok=EXIST_OK,
+        patience=40,
+        optimizer="AdamW",
+        cos_lr=True,
+        amp=True,
+        **AUGMENTATION,
     )
 
     if EXPORT_ONNX:

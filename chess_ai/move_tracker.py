@@ -209,6 +209,25 @@ class MoveTracker:
         hits = sum(1 for square, piece in expected.items() if observations.get(square, {}).get(piece.symbol(), 0.0) >= 0.3)
         self.match = (hits, len(expected))
 
+    def _infer_single_source_move(self, observations: dict[int, dict[str, float]]) -> chess.Move | None:
+        """Infer a unique legal source square when the detected destination cannot be explained by the current board."""
+        board = self.state.board
+        side = board.turn
+        for to_square in sorted(observations.keys()):
+            candidates: list[chess.Move] = []
+            for move in board.legal_moves:
+                if move.to_square != to_square:
+                    continue
+                from_piece = board.piece_at(move.from_square)
+                if from_piece is None or from_piece.color != side:
+                    continue
+                if observations.get(move.from_square):
+                    continue
+                candidates.append(move)
+            if len(candidates) == 1:
+                return candidates[0]
+        return None
+
     def update(self, detections: list[Any]) -> str | None:
         """Evaluate the current detections and confirm one move if it is stable.
 
@@ -229,9 +248,17 @@ class MoveTracker:
         second = scored[1][0] if len(scored) > 1 else float("-inf")
         self.last_delta = best_delta
 
+        fallback_move = self._infer_single_source_move(observations)
+        if fallback_move is not None and fallback_move not in (move for _, move in scored[: min(len(scored), 3)]):
+            best_move = fallback_move
+            best_delta = max(best_delta, self.min_delta)
+            second = float("-inf")
+
         if best_delta < self.min_delta or best_delta - second < self.ambiguity:
-            self.candidate, self.streak = None, 0
-            return None
+            if fallback_move is None:
+                self.candidate, self.streak = None, 0
+                return None
+            best_move = fallback_move
 
         uci = best_move.uci()
         if uci == self.candidate:
