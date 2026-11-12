@@ -23,18 +23,25 @@ _BLACK = {"black", "b"}
 
 
 def label_to_symbol(label: str) -> str | None:
-    """Convert a YOLO label to a python-chess piece symbol.
+    """Convert a detector label into a generic chess symbol.
 
-    :param label: Label read from the detector, for example "white-rook" or "bP".
-    :return: A chess piece symbol such as "R" or "p", or None if the label is not recognized.
+    This project now performs occupancy detection with classes "white" and "black".
+    We keep the legacy interface but map those to a generic white/black pawn symbol,
+    because at this stage the goal is to detect if a square is occupied and which side
+    owns it, not the exact piece type.
     """
-    raw = label.strip()
+    raw = label.strip().lower()
+    if raw in {"white", "w", "white-piece", "occupied-white"}:
+        return "P"
+    if raw in {"black", "b", "black-piece", "occupied-black"}:
+        return "p"
+
     if len(raw) == 1 and raw in "pnbrqkPNBRQK":
         return raw
 
     color: str | None = None
     piece: str | None = None
-    for token in re.split(r"[\s_\-]+", raw.lower()):
+    for token in re.split(r"[\s_\-]+", raw):
         if token in _WHITE:
             color = "w"
         elif token in _BLACK:
@@ -43,7 +50,7 @@ def label_to_symbol(label: str) -> str | None:
             piece = _PIECES[token]
 
     if color is None or piece is None:
-        match = re.fullmatch(r"([wb])([pnbrqk])", raw.lower())
+        match = re.fullmatch(r"([wb])([pnbrqk])", raw)
         if match:
             color, piece = match.group(1), match.group(2)
 
@@ -155,10 +162,9 @@ class MoveTracker:
     def _loglik(self, square: int, piece: chess.Piece | None, observations: dict[int, dict[str, float]]) -> float:
         """Compute a likelihood contribution for a piece on a square.
 
-        :param square: Board square index.
-        :param piece: Chess piece currently expected on the square, or None for empty square.
-        :param observations: Detection confidence map by square.
-        :return: Log-likelihood contribution for this piece-square pairing.
+        Since the detector is now occupancy-only, a white/black occupation is treated as a
+        generic piece of that color rather than a specific piece type. This keeps the rest of
+        the move-tracking logic compatible without requiring a custom piece classifier.
         """
         seen = observations.get(square, {})
         if piece is None:
@@ -166,12 +172,23 @@ class MoveTracker:
                 return 0.0
             return math.log(max(1.0 - max(seen.values()), self.eps))
 
-        probability = seen.get(piece.symbol(), 0.0)
+        expected_symbol = piece.symbol()
+        color_symbol = "P" if piece.color == chess.WHITE else "p"
+        probability = seen.get(expected_symbol, 0.0)
+        if probability <= 0.0:
+            probability = seen.get(color_symbol, 0.0)
         if probability > 0.0:
             return math.log(probability)
 
         if seen:
-            conflicting = max((conf for symbol, conf in seen.items() if symbol != piece.symbol()), default=0.0)
+            conflicting = max(
+                (
+                    conf
+                    for symbol, conf in seen.items()
+                    if symbol != expected_symbol and symbol != color_symbol
+                ),
+                default=0.0,
+            )
             if conflicting > 0.0:
                 return math.log(max(1.0 - conflicting, self.eps)) - 4.0
 
@@ -206,7 +223,15 @@ class MoveTracker:
         :return: None.
         """
         expected = self.state.board.piece_map()
-        hits = sum(1 for square, piece in expected.items() if observations.get(square, {}).get(piece.symbol(), 0.0) >= 0.3)
+        hits = 0
+        for square, piece in expected.items():
+            seen = observations.get(square, {})
+            detected = seen.get(piece.symbol(), 0.0)
+            if detected < 0.3:
+                color_symbol = "P" if piece.color == chess.WHITE else "p"
+                detected = seen.get(color_symbol, 0.0)
+            if detected >= 0.3:
+                hits += 1
         self.match = (hits, len(expected))
 
     def update(self, detections: list[Any]) -> str | None:

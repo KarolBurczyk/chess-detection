@@ -24,7 +24,7 @@ class DetectorApp:
         :return: None.
         """
         self.board = BoardDetector()
-        self.pieces = PieceDetector()
+        self.pieces = PieceDetector(board_detector=self.board)
         self.cap = cv2.VideoCapture(Config.SOURCE)
 
     def run(self) -> None:

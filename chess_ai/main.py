@@ -1,3 +1,4 @@
+import chess
 import cv2
 import numpy as np
 
@@ -41,18 +42,36 @@ def main() -> None:
     """
     cap = cv2.VideoCapture(Config.SOURCE)
     board_detector = BoardDetector()
-    piece_detector = PieceDetector()
+    piece_detector = PieceDetector(board_detector=board_detector)
     state = BoardState()
-    tracker = MoveTracker(state, board_detector, piece_detector.model.names)
+    tracker = MoveTracker(state, board_detector, piece_detector.class_names)
     view = BoardView()
+
+    calibration_frames: list[np.ndarray] = []
+    while len(calibration_frames) < 12:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        frame = board_detector.update(frame)
+        if board_detector.H is not None:
+            calibration_frames.append(frame.copy())
+        if len(calibration_frames) >= 12:
+            break
+
+    if calibration_frames:
+        expected_start = {
+            square: ("white" if piece.color == chess.WHITE else "black")
+            for square, piece in state.board.piece_map().items()
+        }
+        piece_detector.auto_tune(calibration_frames, expected=expected_start)
 
     while True:
         ok, frame = cap.read()
         if not ok:
             break
 
-        detections = piece_detector.detect(frame)
         frame = board_detector.update(frame)
+        detections = piece_detector.detect(frame)
 
         if board_detector.H is not None:
             san = tracker.update(detections)
