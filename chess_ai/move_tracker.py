@@ -25,12 +25,13 @@ _BLACK = {"black", "b"}
 def label_to_symbol(label: str) -> str | None:
     """Convert a detector label into a generic chess symbol.
 
-    This project now performs occupancy detection with classes "white" and "black".
-    We keep the legacy interface but map those to a generic white/black pawn symbol,
-    because at this stage the goal is to detect if a square is occupied and which side
-    owns it, not the exact piece type.
+    Occupancy-only detectors publish a plain "occupied" label. We treat that as a
+    generic piece placeholder so the rest of the pipeline can still ingest detections
+    without depending on color classification.
     """
     raw = label.strip().lower()
+    if raw in {"occupied", "occupied-piece", "piece", "generic-piece"}:
+        return "P"
     if raw in {"white", "w", "white-piece", "occupied-white"}:
         return "P"
     if raw in {"black", "b", "black-piece", "occupied-black"}:
@@ -162,11 +163,13 @@ class MoveTracker:
     def _loglik(self, square: int, piece: chess.Piece | None, observations: dict[int, dict[str, float]]) -> float:
         """Compute a likelihood contribution for a piece on a square.
 
-        Since the detector is now occupancy-only, a white/black occupation is treated as a
-        generic piece of that color rather than a specific piece type. This keeps the rest of
-        the move-tracking logic compatible without requiring a custom piece classifier.
+        Occupancy-only detection means any occupied marker on a square should count as
+        evidence for the square being occupied regardless of which side the generic
+        detector assigned it to. This keeps the tracker compatible with a colorless
+        detector while still scoring legal moves against the expected board.
         """
         seen = observations.get(square, {})
+        generic_occupancy = max(seen.get("P", 0.0), seen.get("p", 0.0))
         if piece is None:
             if not seen:
                 return 0.0
@@ -177,6 +180,8 @@ class MoveTracker:
         probability = seen.get(expected_symbol, 0.0)
         if probability <= 0.0:
             probability = seen.get(color_symbol, 0.0)
+        if probability <= 0.0:
+            probability = generic_occupancy
         if probability > 0.0:
             return math.log(probability)
 
@@ -185,7 +190,7 @@ class MoveTracker:
                 (
                     conf
                     for symbol, conf in seen.items()
-                    if symbol != expected_symbol and symbol != color_symbol
+                    if symbol != expected_symbol and symbol != color_symbol and symbol not in {"P", "p"}
                 ),
                 default=0.0,
             )
@@ -212,6 +217,15 @@ class MoveTracker:
                 self._loglik(square, after.get(square), observations) - self._loglik(square, before.get(square), observations)
                 for square in changed
             )
+
+            occupancy_only = all(
+                symbol in {"P", "p"} for square in observations for symbol in observations[square]
+            )
+            if occupancy_only and board.is_capture(move):
+                target_conf = max(observations.get(move.to_square, {}).values(), default=0.0)
+                source_conf = max(observations.get(move.from_square, {}).values(), default=0.0)
+                delta += 1.5 * target_conf + 0.5 * source_conf
+
             scored.append((delta, move))
         scored.sort(key=lambda item: -item[0])
         return scored
@@ -219,17 +233,21 @@ class MoveTracker:
     def _update_match(self, observations: dict[int, dict[str, float]]) -> None:
         """Update the match summary between expected pieces and detected pieces.
 
-        :param observations: Observed piece probability map per square.
-        :return: None.
+        When the detector is occupancy-only we do not care whether the marker is labeled
+        as white or black; a square is considered matched if there is any generic
+        Occupied signal on it. This keeps the displayed agreement aligned with the real
+        board occupancy, not a side-specific symbol split.
         """
         expected = self.state.board.piece_map()
         hits = 0
         for square, piece in expected.items():
             seen = observations.get(square, {})
-            detected = seen.get(piece.symbol(), 0.0)
-            if detected < 0.3:
-                color_symbol = "P" if piece.color == chess.WHITE else "p"
-                detected = seen.get(color_symbol, 0.0)
+            detected = max(
+                seen.get(piece.symbol(), 0.0),
+                seen.get("P" if piece.color == chess.WHITE else "p", 0.0),
+                seen.get("P", 0.0),
+                seen.get("p", 0.0),
+            )
             if detected >= 0.3:
                 hits += 1
         self.match = (hits, len(expected))

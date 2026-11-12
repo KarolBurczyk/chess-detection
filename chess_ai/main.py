@@ -59,10 +59,7 @@ def main() -> None:
             break
 
     if calibration_frames:
-        expected_start = {
-            square: ("white" if piece.color == chess.WHITE else "black")
-            for square, piece in state.board.piece_map().items()
-        }
+        expected_start = {square: "occupied" for square in state.board.piece_map()}
         piece_detector.auto_tune(calibration_frames, expected=expected_start)
 
     while True:
